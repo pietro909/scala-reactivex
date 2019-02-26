@@ -58,7 +58,7 @@ class BinaryTreeSet extends Actor {
   import BinaryTreeSet._
   import BinaryTreeNode._
 
-  def createRoot: ActorRef = context.actorOf(BinaryTreeNode.props(0, initiallyRemoved = true))
+  def createRoot: ActorRef = context.actorOf(BinaryTreeNode.props(0, initiallyRemoved = false))
 
   var root = createRoot
 
@@ -77,8 +77,8 @@ class BinaryTreeSet extends Actor {
     case contains: Contains =>
       root ! contains
 
-    case Remove(requester, id, elem) =>
-    // TODO
+    case  remove: Remove=>
+      root ! remove
 
     case GC =>
     // TODO
@@ -135,7 +135,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
           case Some(child) =>
             child ! Insert(client, id, newElement)
           case None => {
-            val nextChild: ActorRef = context.actorOf(props(newElement, true))
+            val nextChild: ActorRef = context.actorOf(props(newElement, false))
             subtrees += ((Right, nextChild))
             client ! OperationFinished(id)
           }
@@ -146,7 +146,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
           case Some(child) =>
             child ! Insert(client, id, newElement)
           case None => {
-            val nextChild: ActorRef = context.actorOf(props(newElement, true))
+            val nextChild: ActorRef = context.actorOf(props(newElement, false))
             subtrees += ((Left, nextChild))
             client ! OperationFinished(id)
           }
@@ -155,7 +155,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
 
     case Contains(requester, id, queryElement) =>
       if (elem == queryElement) {
-        requester ! ContainsResult(id, result = true)
+        requester ! ContainsResult(id, result = !removed)
       } else if (queryElement > elem && (subtrees get Right).isDefined) {
         (subtrees get Right).foreach  { _ ! Contains(requester, id, queryElement)}
       } else if ((subtrees get Left).isDefined) {
@@ -163,6 +163,19 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
       } else {
         requester ! ContainsResult(id, result = false)
       }
+
+    case Remove(requester, id, queryElement) =>
+      if (elem == queryElement) {
+        removed = true
+        requester ! OperationFinished(id)
+      } else if (queryElement > elem && (subtrees get Right).isDefined) {
+        (subtrees get Right).foreach  { _ ! Remove(requester, id, queryElement)}
+      } else if ((subtrees get Left).isDefined) {
+        (subtrees get Left).foreach  { _ ! Remove(requester, id, queryElement)}
+      } else {
+        requester ! OperationFinished(id)
+      }
+
     case _ =>
     // TODO
   }
