@@ -1,9 +1,9 @@
-package bank_account
+package week_2.bank_account
 
 import akka.actor.Actor.Receive
 import akka.actor.{Actor, ActorRef}
-import bank_account.BankAccount.{Deposit, Withdraw}
-import bank_account.WireTransfer.{Done, Failed, Transfer}
+import week_2.bank_account.BankAccount.{Deposit, Withdraw}
+import week_2.bank_account.WireTransfer.{Done, Failed, Transfer}
 
 object WireTransfer {
 

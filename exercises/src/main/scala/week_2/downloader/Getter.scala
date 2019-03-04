@@ -1,7 +1,7 @@
-package downloader
+package week_2.downloader
 
 import akka.actor.{Actor, ActorLogging, Status}
-import downloader.Getter.{Abort, Done}
+import week_2.downloader.Getter.{Abort, Done}
 import akka.pattern.pipe
 
 import scala.util.{Failure, Success}

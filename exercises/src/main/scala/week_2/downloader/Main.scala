@@ -1,7 +1,7 @@
-package downloader
+package week_2.downloader
 
 import akka.actor.{Actor, Props}
-import downloader.Receptionist.{Get, Result}
+import week_2.downloader.Receptionist.{Get, Result}
 
 class Main extends Actor {
   val receptionist = context.actorOf(Props[Receptionist])

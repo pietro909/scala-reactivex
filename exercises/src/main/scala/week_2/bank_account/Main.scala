@@ -1,8 +1,8 @@
-package bank_account
+package week_2.bank_account
 
 import akka.actor.{Actor, ActorLogging, Props}
-import bank_account.BankAccount.{Deposit}
-import bank_account.WireTransfer.{Done, Failed, Transfer}
+import week_2.bank_account.BankAccount.{Deposit}
+import week_2.bank_account.WireTransfer.{Done, Failed, Transfer}
 
 class Main extends Actor with ActorLogging {
   val transferer = context.actorOf(Props[WireTransfer], "transferer")

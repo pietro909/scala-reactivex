@@ -1,7 +1,7 @@
-package bank_account
+package week_2.bank_account
 
 import akka.actor.Actor
-import bank_account.WireTransfer.{Done, Failed}
+import week_2.bank_account.WireTransfer.{Done, Failed}
 
 object BankAccount {
 

@@ -1,4 +1,4 @@
-package downloader
+package week_2.downloader
 
 
 import java.util.concurrent.Executor

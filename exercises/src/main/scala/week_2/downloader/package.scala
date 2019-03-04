@@ -1,3 +1,5 @@
+package week_2
+
 import org.jsoup.Jsoup
 import scala.collection.JavaConverters._
 

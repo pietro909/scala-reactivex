@@ -1,7 +1,8 @@
-package downloader
+package week_3.downloader
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Props, ReceiveTimeout}
-import downloader.Controller.{CheckUrl, Result}
+import week_2.downloader.Controller.{CheckUrl, Result}
+
 import scala.concurrent.duration._
 
 

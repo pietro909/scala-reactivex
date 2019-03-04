@@ -1,8 +1,8 @@
-package downloader
+package week_2.downloader
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
-import downloader.Controller.CheckUrl
-import downloader.Receptionist.{Failed, Get, Result}
+import week_2.downloader.Controller.CheckUrl
+import week_2.downloader.Receptionist.{Failed, Get, Result}
 
 object Receptionist {
 

@@ -1,4 +1,4 @@
-package counters
+package week_2.counters
 
 import akka.actor.{Actor, ActorRef}
 

@@ -1,9 +1,9 @@
-package counters
+package week_2.counters
 
 import akka.actor.{Actor, Props}
 
 class Main extends Actor {
-  val counter = context.actorOf(Props[Counter], "counters")
+  val counter = context.actorOf(Props[Counter], "week_2/counters")
 
   counter ! "incr"
   counter ! "incr"
