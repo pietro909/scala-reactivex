@@ -2,14 +2,10 @@ package week_3.downloader
 
 import akka.actor.{Actor, ActorLogging, Status}
 import akka.pattern.pipe
-import week_2.downloader.Getter.{Abort, Done}
 
 object Getter {
-
-  case object Done
-
-  case object Abort
-
+  // Done is superseded by the Terminated message by Akka
+  // Abort is replaced by the context.stop command
 }
 
 class Getter(url: String, depth: Int) extends Actor with ActorLogging {
@@ -36,20 +32,11 @@ class Getter(url: String, depth: Int) extends Actor with ActorLogging {
     case body: String =>
       for (link <- findLinks(body, url))
         context.parent ! Controller.CheckUrl(link, depth)
-
       log.debug("all links sent, stopping")
-      stop
-    case Abort =>
-      log.warning("Abort received")
-      stop
+      context.stop(self)
+
     case _: Status.Failure =>
       log.error("Http failed")
-      stop
-
-  }
-
-  def stop() = {
-    context.parent ! Done
-    context.stop(self)
+      context.stop(self)
   }
 }

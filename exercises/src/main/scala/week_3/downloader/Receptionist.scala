@@ -1,8 +1,8 @@
 package week_3.downloader
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Props}
-import week_2.downloader.Controller.CheckUrl
-import week_2.downloader.Receptionist.{Failed, Get, Result}
+import akka.actor.{Actor, ActorLogging, ActorRef, Props, SupervisorStrategy, Terminated}
+import week_3.downloader.Controller.CheckUrl
+import week_3.downloader.Receptionist.{Failed, Get, Result}
 
 object Receptionist {
 
@@ -24,10 +24,13 @@ class Receptionist extends Actor with ActorLogging {
     else {
       requestNumber += 1
       val controller = context.actorOf(Props[Controller], s"ctrl-${requestNumber}")
+      context.watch(controller)
       controller ! CheckUrl(queue.head.url, 2)
       working(queue)
     }
   }
+
+  override def supervisorStrategy = SupervisorStrategy.stoppingStrategy
 
   override def receive: Receive = waiting
 
@@ -39,8 +42,15 @@ class Receptionist extends Actor with ActorLogging {
 
   def working(queue: Vector[Job]): Receive = {
     case Controller.Result(links) =>
-      queue.head.client ! Result(queue.head.url, links.toList)
-      //context.stop(sender) // TODO: why are we stopping the sender?
+      val job = queue.head
+      log.debug(s"jobbe done... ${links}")
+      job.client ! Result(job.url, links.toList)
+      context.stop(context.unwatch(sender))
+      context.become(runNext(queue.tail))
+
+    case Terminated(_) =>
+      val job = queue.head
+      job.client ! Failed //(job)
       context.become(runNext(queue.tail))
 
     case Get(url) => {

@@ -1,4 +1,4 @@
-name := "week2"
+name := "reactive-programming"
 
 version := "0.1"
 

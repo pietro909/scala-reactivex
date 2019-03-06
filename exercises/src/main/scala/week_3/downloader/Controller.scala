@@ -1,7 +1,7 @@
 package week_3.downloader
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Props, ReceiveTimeout}
-import week_2.downloader.Controller.{CheckUrl, Result}
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, ReceiveTimeout, SupervisorStrategy, Terminated}
+import week_3.downloader.Controller.{CheckUrl, Result}
 
 import scala.concurrent.duration._
 
@@ -21,32 +21,34 @@ class Controller extends Actor with ActorLogging {
    used a `val`, the set would have been mutable.
   */
   var cache = Set.empty[String]
-  var children = Set.empty[ActorRef]
+
+  override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries = 5) {
+    case _: Exception =>
+      SupervisorStrategy.Restart
+  }
 
   context.setReceiveTimeout(10.seconds)
 
   override def receive: Receive = {
-    case CheckUrl(url, depth) => {
-      //log.debug("Checking {}", url)
+    case CheckUrl(url, depth) =>
       if (!cache(url) && depth > 0) {
-        val nextGetter = context.actorOf(Props(new Getter(url, depth - 1)))
-        children += nextGetter
+        val nextName = url.replace("[http|s]","").replaceAll("[.|/|:|#]", "_")
+        val nextGetter = context.actorOf(Props(
+          new Getter(url, depth - 1))
+          //s"GET_${nextName}_at_${depth}"
+        )
+        context.watch(nextGetter)
       }
       cache += url
-    }
 
-    case Getter.Done => {
-      val sender = context.sender
-      children -= sender
-      if (children.isEmpty) {
+    case Terminated(_) =>
+      if (context.children.isEmpty) {
+        log.debug("DONEEEE...")
         context.parent ! Result(cache)
-      }
-    }
+      }else
+        log.debug("CTRL continued...")
 
     case ReceiveTimeout =>
-      children foreach {
-        _ ! Getter.Abort
-      }
-
+      context.children foreach context.stop
   }
 }
