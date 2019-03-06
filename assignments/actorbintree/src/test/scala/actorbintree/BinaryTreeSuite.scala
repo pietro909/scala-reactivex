@@ -1,18 +1,17 @@
 /**
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
- */
+  * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+  */
 package actorbintree
 
-import akka.actor.{ Props, ActorRef, ActorSystem }
-import org.scalatest.{ BeforeAndAfterAll, FlatSpec }
-import akka.testkit.{ TestProbe, ImplicitSender, TestKit }
+import akka.actor.{Props, ActorRef, ActorSystem}
+import org.scalatest.{BeforeAndAfterAll, FlatSpec}
+import akka.testkit.{TestProbe, ImplicitSender, TestKit}
 import org.scalatest.Matchers
 import scala.util.Random
 import scala.concurrent.duration._
 import org.scalatest.FunSuiteLike
 
-class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSuiteLike with Matchers with BeforeAndAfterAll with ImplicitSender
-{
+class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSuiteLike with Matchers with BeforeAndAfterAll with ImplicitSender {
 
   def this() = this(ActorSystem("BinaryTreeSuite"))
 
@@ -29,8 +28,9 @@ class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSui
         requester.expectMsgType[OperationReply]
       } catch {
         case ex: Throwable if ops.size > 10 => fail(s"failure to receive confirmation $i/${ops.size}", ex)
-        case ex: Throwable                  => fail(s"failure to receive confirmation $i/${ops.size}\nRequests:" + ops.mkString("\n    ", "\n     ", ""), ex)
+        case ex: Throwable => fail(s"failure to receive confirmation $i/${ops.size}\nRequests:" + ops.mkString("\n    ", "\n     ", ""), ex)
       }
+      //println(s"respliesUnsorted: ${repliesUnsorted}")
       val replies = repliesUnsorted.sortBy(_.id)
       if (replies != expectedReplies) {
         val pairs = (replies zip expectedReplies).zipWithIndex filter (x => x._1._1 != x._1._2)
@@ -47,6 +47,44 @@ class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSui
 
     receiveN(probe, ops, expected)
     // the grader also verifies that enough actors are created
+  }
+
+  test("GC only") {
+    val requester = TestProbe()
+    val requesterRef = requester.ref
+    val rnd = new Random()
+    val topNode = system.actorOf(Props[BinaryTreeSet], name = "BTSet")
+
+    val ops: List[Operation] = List(
+      Insert(requesterRef, id = 100, 1),
+      Contains(requesterRef, id = 50, 2),
+      Remove(requesterRef, id = 10, 1),
+      Insert(requesterRef, id = 20, 2),
+      Contains(requesterRef, id = 80, 1),
+      Contains(requesterRef, id = 70, 2)
+    )
+
+    val expectedReplies = List(
+      OperationFinished(id = 10),
+      OperationFinished(id = 20),
+      ContainsResult(id = 50, false),
+      ContainsResult(id = 70, true),
+      ContainsResult(id = 80, false),
+      OperationFinished(id = 100)
+    )
+// correct:  Vector(OperationFinished(100), ContainsResult(50,false), OperationFinished(10), OperationFinished(20), ContainsResult(80,false), ContainsResult(70,true))
+//            Vector(OperationFinished(100), ContainsResult(50,false), OperationFinished(10), OperationFinished(20), ContainsResult(80,false), ContainsResult(70,true))
+
+    ops.zipWithIndex.foreach {
+      case (operation, index) =>
+        topNode ! operation
+        if (index == 3) {
+          topNode ! GC
+        }
+    }
+
+
+    receiveN(requester, ops, expectedReplies)
   }
 
   test("proper inserts and lookups") {
@@ -67,30 +105,32 @@ class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSui
     val requester = TestProbe()
     val requesterRef = requester.ref
     val ops = List(
-      Insert(requesterRef, id=100, 1),
-      Contains(requesterRef, id=50, 2),
-      Remove(requesterRef, id=10, 1),
-      Insert(requesterRef, id=20, 2),
-      Contains(requesterRef, id=80, 1),
-      Contains(requesterRef, id=70, 2)
-      )
+      Insert(requesterRef, id = 100, 1),
+      Contains(requesterRef, id = 50, 2),
+      Remove(requesterRef, id = 10, 1),
+      Insert(requesterRef, id = 20, 2),
+      Contains(requesterRef, id = 80, 1),
+      Contains(requesterRef, id = 70, 2)
+    )
 
     val expectedReplies = List(
-      OperationFinished(id=10),
-      OperationFinished(id=20),
-      ContainsResult(id=50, false),
-      ContainsResult(id=70, true),
-      ContainsResult(id=80, false),
-      OperationFinished(id=100)
-      )
+      OperationFinished(id = 10),
+      OperationFinished(id = 20),
+      ContainsResult(id = 50, false),
+      ContainsResult(id = 70, true),
+      ContainsResult(id = 80, false),
+      OperationFinished(id = 100)
+    )
 
     verify(requester, ops, expectedReplies)
   }
 
   test("behave identically to built-in set (includes GC)") {
     val rnd = new Random()
+
     def randomOperations(requester: ActorRef, count: Int): Seq[Operation] = {
       def randomElement: Int = rnd.nextInt(100)
+
       def randomOperation(requester: ActorRef, id: Int): Operation = rnd.nextInt(4) match {
         case 0 => Insert(requester, id, randomElement)
         case 1 => Insert(requester, id, randomElement)
@@ -103,6 +143,7 @@ class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSui
 
     def referenceReplies(operations: Seq[Operation]): Seq[OperationReply] = {
       var referenceSet = Set.empty[Int]
+
       def replyFor(op: Operation): OperationReply = op match {
         case Insert(_, seq, elem) =>
           referenceSet = referenceSet + elem
@@ -124,9 +165,10 @@ class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSui
     val ops = randomOperations(requester.ref, count)
     val expectedReplies = referenceReplies(ops)
 
-    ops foreach { op =>
-      topNode ! op
-      if (rnd.nextDouble() < 0.1) topNode ! GC
+    ops foreach {
+      op =>
+        topNode ! op
+        if (rnd.nextDouble() < 0.1) topNode ! GC
     }
     receiveN(requester, ops, expectedReplies)
   }
