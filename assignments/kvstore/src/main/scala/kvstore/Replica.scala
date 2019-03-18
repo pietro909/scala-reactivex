@@ -37,7 +37,8 @@ object Replica {
 
   case class PersistenceData(key: String, valueOption: Option[String], client: ActorRef)
 
-  case class PersistenceTimeout(persistenceData: PersistenceData, id: Long)
+  case class PersistenceTimeout(id: Long)
+  case class PersistenceLeadTimeout(id: Long)
 
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 }
@@ -88,7 +89,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
 
   def persist(persistenceData: PersistenceData, id: Long) = {
     pending = pending + ((id, persistenceData))
-    scheduler.scheduleOnce(TIMEOUT, self, PersistenceTimeout(persistenceData, id))
+    scheduler.scheduleOnce(TIMEOUT, self, PersistenceTimeout(id))
     persistence ! Persist(persistenceData.key, persistenceData.valueOption, id)
   }
 
@@ -97,8 +98,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     case Insert(key, value, id) =>
       insertOrRemove(key, Some(value), id)
       persist(PersistenceData(key, Some(value), sender), id)
+      //pending = pending + ((id, PersistenceData(key, Some(value), sender)))
+      scheduler.scheduleOnce(1 second, self, PersistenceLeadTimeout(id))
+      persistence ! Persist(key, Some(value), id)
 
-    // TODO: sender ! OperationAck(id)
     case Remove(key, id) =>
       insertOrRemove(key, None, id)
       persist(PersistenceData(key, None, sender), id)
@@ -112,10 +115,23 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
           log.error(s"Got Persisted for ${key} - ${seq} but no pending found")
       }
 
-    case PersistenceTimeout(persistenceData, seq) =>
-      log.debug(s"${seq} for ${persistenceData.key} was PersistenceTimeout")
-      if (pending contains seq) {
-        persist(persistenceData, seq)
+    case PersistenceTimeout(seq) =>
+      (pending get seq) match {
+        case Some(persistenceData) =>
+          log.debug(s"${seq} for ${persistenceData.key} was PersistenceTimeout")
+          persist(persistenceData, seq)
+        case None =>
+        // that was done!
+      }
+
+    case PersistenceLeadTimeout(seq) =>
+      (pending get seq) match {
+        case Some(persistenceData) =>
+          log.debug(s"${seq} for ${persistenceData.key} was PersistenceLeadTimeout")
+          pending = pending - seq
+          persistenceData.client ! OperationFailed(seq)
+        case None =>
+        // that was done!
       }
 
     case Get(key, id) =>
@@ -149,10 +165,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
           log.error(s"Got Persisted for ${key} - ${seq} but no pending found")
       }
 
-    case PersistenceTimeout(persistenceData, seq) =>
-      log.debug(s"${seq} for ${persistenceData.key} was PersistenceTimeout")
-      if (pending contains seq) {
-        persist(persistenceData, seq)
+    case PersistenceTimeout(seq) =>
+      (pending get seq) match {
+        case Some(persistenceData) =>
+          persist(persistenceData, seq)
+        case None =>
+          // no op
       }
     case _ =>
   }
