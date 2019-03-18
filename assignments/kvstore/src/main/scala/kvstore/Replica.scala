@@ -50,7 +50,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   def receive = {
     case JoinedPrimary   => context.become(leader)
-    case JoinedSecondary => context.become(replica(0))
+    case JoinedSecondary => context.become(replica(0L))
   }
 
   def insertOrRemove(key: String, optionValue: Option[String]) = optionValue match {
