@@ -38,9 +38,15 @@ object Replica {
   case class PersistenceData(key: String, valueOption: Option[String], client: ActorRef)
 
   case class PersistenceTimeout(id: Long)
+
   case class PersistenceLeadTimeout(id: Long)
 
+  case class ReplicatorData(replicatorRef: ActorRef, outstandingMessages: List[Long])
+
+  case class PendingItem(client: ActorRef, toBeReplicated: Int)
+
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
+
 }
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
@@ -55,16 +61,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
    */
 
   var kv = Map.empty[String, String]
-  // a map from secondary replicas to replicators
-  var secondaries = Map.empty[ActorRef, ActorRef]
-  // the current set of replicators
-  var replicators = Set.empty[ActorRef]
   // waiting for PersistenceAck
-  var pending = Map.empty[Long, PersistenceData]
+  private var pendingPersistence = Map.empty[Long, PersistenceData]
 
-  val persistence = context.system.actorOf(persistenceProps)
-  val scheduler = context.system.scheduler
-  val TIMEOUT = 100 millis
+  private val persistence = context.system.actorOf(persistenceProps)
+  private val scheduler = context.system.scheduler
+  private val TIMEOUT = 100 millis
 
   override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries = 5) {
     case _: Exception =>
@@ -74,7 +76,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   arbiter ! Join
 
   def receive = {
-    case JoinedPrimary => context.become(leader)
+    case JoinedPrimary => context.become(leader(Map.empty[ActorRef, ReplicatorData], Map.empty[Long, PendingItem]))
     case JoinedSecondary => context.become(replica(0L))
   }
 
@@ -88,35 +90,71 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   }
 
   def persist(persistenceData: PersistenceData, id: Long) = {
-    pending = pending + ((id, persistenceData))
+    pendingPersistence = pendingPersistence + ((id, persistenceData))
     scheduler.scheduleOnce(TIMEOUT, self, PersistenceTimeout(id))
     persistence ! Persist(persistenceData.key, persistenceData.valueOption, id)
   }
 
+  /*def waitingForReplication(id: Long, replicators: Map[ActorRef, ReplicatorData]): Boolean =
+    replicators.foldLeft(false) {
+      case (found: Boolean, (_, replicatorData)) =>
+      found || replicatorData.outstandingMessages.contains(id)
+    }
+    */
+
   /* TODO Behavior for  the leader role. */
-  val leader: Receive = {
+  def leader(replicators: Map[ActorRef, ReplicatorData], pending: Map[Long, PendingItem]): Receive = {
     case Insert(key, value, id) =>
       insertOrRemove(key, Some(value), id)
       persist(PersistenceData(key, Some(value), sender), id)
-      //pending = pending + ((id, PersistenceData(key, Some(value), sender)))
       scheduler.scheduleOnce(1 second, self, PersistenceLeadTimeout(id))
-      persistence ! Persist(key, Some(value), id)
+      val newReplicators = replicators.map(data => {
+        val (replicaRef, replicatorData) = data
+        replicatorData.replicatorRef ! Replicate(key, Some(value), id)
+        // persist the outstanding message
+        val newMessages = id :: replicatorData.outstandingMessages
+        (replicaRef, ReplicatorData(replicatorData.replicatorRef, newMessages))
+      })
+      val newPending = pending + ((id, PendingItem(sender, newReplicators.size)))
+      log.debug(s"${id} Insert has newPending ${newPending}")
+      context.become(leader(newReplicators, newPending), true)
 
     case Remove(key, id) =>
       insertOrRemove(key, None, id)
       persist(PersistenceData(key, None, sender), id)
+      val newReplicators = replicators.map(data => {
+        val (replicaRef, replicatorData) = data
+        replicatorData.replicatorRef ! Replicate(key, None, id)
+        // persist the outstanding message
+        val newMessages = id :: replicatorData.outstandingMessages
+        (replicaRef, ReplicatorData(replicatorData.replicatorRef, newMessages))
+      })
+      val newPending = pending + ((id, PendingItem(sender, newReplicators.size)))
+      log.debug(s"${id} Remove has newPending ${newPending}")
+      context.become(leader(newReplicators, newPending), true)
 
     case Persisted(key, seq) =>
-      (pending get seq) match {
+      pendingPersistence get seq match {
         case Some(persistenceData) =>
-          persistenceData.client ! OperationAck(seq) // id = seq for 2nd replicas
-          pending = pending - seq
+          pending get seq match {
+            case None =>
+              persistenceData.client ! OperationAck(seq) // id = seq for 2nd replicas
+            case Some(PendingItem(client, toBeReplicated)) if toBeReplicated < 1 =>
+              val newPending = pending - seq
+              persistenceData.client ! OperationAck(seq) // id = seq for 2nd replicas
+              context.become(leader(replicators, newPending), true)
+            case _ =>
+              log.debug(s"${seq} persisted, waiting for ${pending}")
+
+            // just wait
+          }
+          pendingPersistence = pendingPersistence - seq
         case None =>
-          log.error(s"Got Persisted for ${key} - ${seq} but no pending found")
+        // just wait
       }
 
     case PersistenceTimeout(seq) =>
-      (pending get seq) match {
+      pendingPersistence get seq match {
         case Some(persistenceData) =>
           log.debug(s"${seq} for ${persistenceData.key} was PersistenceTimeout")
           persist(persistenceData, seq)
@@ -125,19 +163,86 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       }
 
     case PersistenceLeadTimeout(seq) =>
-      (pending get seq) match {
+      pendingPersistence get seq match {
         case Some(persistenceData) =>
           log.debug(s"${seq} for ${persistenceData.key} was PersistenceLeadTimeout")
-          pending = pending - seq
+          pendingPersistence = pendingPersistence - seq
           persistenceData.client ! OperationFailed(seq)
         case None =>
         // that was done!
       }
+      pending get seq match {
+        case Some(PendingItem(client, toBeReplicated)) if toBeReplicated > 0 =>
+          log.debug(s"${seq} with ${toBeReplicated} was PersistenceLeadTimeout")
+          client ! OperationFailed(seq)
+          context.become(leader(replicators, pending - seq), true)
+        case Some(PendingItem(client, _))  =>
+          context.become(leader(replicators, pending - seq), true)
+        case None =>
+        // that was done!
+      }
+
 
     case Get(key, id) =>
       sender ! GetResult(key, kv get key, id)
 
+    case Replicas(replicas) =>
+      val secondaryReplicas = replicas.filterNot(_ == context.self)
+      var newReplicators = Map.empty[ActorRef, ReplicatorData]
+      var newPending = pending
+      // remove the non existing ones
+      replicators foreach { data =>
+        if (secondaryReplicas.contains(data._1)) {
+          newReplicators += data
+        } else {
+          data._2.replicatorRef ! PoisonPill
+          // TODO: if hits 0 and no persististence is pending, send the hack
+          newPending = newPending.map(p => {
+            val (pId, pItem) = p
+            if (pItem.toBeReplicated < 2) {
+              pItem.client ! OperationAck(pId)
+            }
+            (pId, PendingItem(pItem.client, pItem.toBeReplicated -1 ))
+          })
+        }
+      }
+      // add the new ones
+      secondaryReplicas foreach { replicaRef =>
+        if (!newReplicators.contains(replicaRef)) {
+          val replicator = context.system.actorOf(Replicator.props(replicaRef))
+          kv.foreach(keyValue =>
+            replicator ! Replicate(keyValue._1, Some(keyValue._2), 0)
+          )
+          newReplicators += ((replicaRef, ReplicatorData(replicator, List.empty[Long])))
+        }
+      }
+      log.debug(s"Replicas, new has newPending ${newPending}")
+
+      context.become(leader(newReplicators, newPending), discardOld = true)
+
+    case Replicated(key, id) =>
+      val newReplicators = replicators.map(data => {
+        val (replicaRef, replicatorData) = data
+        (replicaRef, ReplicatorData(replicatorData.replicatorRef, replicatorData.outstandingMessages.filterNot(_ == id)))
+      })
+      // TODO: if "id" is not found in the replicators, send OperationAck
+      (pending get id, pendingPersistence.contains(id)) match {
+        case (Some(PendingItem(client, toBeReplicated)), false) if toBeReplicated < 2 =>
+          client ! OperationAck(id)
+          context.become(leader(newReplicators, pending - id), discardOld = true)
+        case (Some(PendingItem(client, toBeReplicated)), any) =>
+          log.debug(s"${id} had ${toBeReplicated}, pending persistence is ${any}")
+
+          val newPending = pending.updated(id, PendingItem(client, toBeReplicated - 1))
+          context.become(leader(newReplicators, newPending), discardOld = true)
+        case _ =>
+          log.debug(s"${id} deep shit")
+
+        // this is weird...
+      }
     case _ =>
+    // just wait
+
   }
 
   /* TODO Behavior for the replica role. */
@@ -157,20 +262,24 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     // if greater than expected, ignore it
 
     case Persisted(key, seq) =>
-      (pending get seq) match {
+      pendingPersistence get seq match {
         case Some(persistenceData) =>
           persistenceData.client ! SnapshotAck(key, seq) // id = seq for 2nd replicas
-          pending = pending - seq
+          pendingPersistence = pendingPersistence - seq
         case None =>
-          log.error(s"Got Persisted for ${key} - ${seq} but no pending found")
+          log.error(s"Got Persisted for ${
+            key
+          } - ${
+            seq
+          } but no pending found")
       }
 
     case PersistenceTimeout(seq) =>
-      (pending get seq) match {
+      pendingPersistence get seq match {
         case Some(persistenceData) =>
           persist(persistenceData, seq)
         case None =>
-          // no op
+        // no op
       }
     case _ =>
   }
