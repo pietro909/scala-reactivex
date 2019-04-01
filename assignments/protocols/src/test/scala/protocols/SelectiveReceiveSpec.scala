@@ -10,26 +10,27 @@ import org.scalatest.prop.PropertyChecks
 
 trait SelectiveReceiveSpec extends FunSuite with PropertyChecks with MustMatchers {
 
-    def behavior[T](inbox: TestInbox[T], size: Int, seq: List[T]) =
-        SelectiveReceive(size, expectOne(inbox, seq))
+  def behavior[T](inbox: TestInbox[T], size: Int, seq: List[T]) =
+    SelectiveReceive(size, expectOne(inbox, seq))
 
-    def expectOne[T](inbox: TestInbox[T], seq: List[T]): Behavior[T] =
-        seq match {
-            case x :: xs =>
-                receiveMessagePartial {
-                    case `x` =>
-                        inbox.ref ! x
-                        expectOne(inbox, xs)
-                }
-            case Nil => Behaviors.ignore
-        }
-    
-    def expectStart[T](inbox: TestInbox[T], start: T, followUp: Behavior[T]): Behavior[T] =
+  def expectOne[T](inbox: TestInbox[T], seq: List[T]): Behavior[T] =
+    seq match {
+      case x :: xs =>
         receiveMessagePartial {
-            case x @ `start` =>
-                inbox.ref ! x
-                followUp
+          case `x` =>
+            inbox.ref ! x
+            expectOne(inbox, xs)
         }
+      case Nil =>
+        Behaviors.ignore
+    }
+
+  def expectStart[T](inbox: TestInbox[T], start: T, followUp: Behavior[T]): Behavior[T] =
+    receiveMessagePartial {
+      case x@`start` =>
+        inbox.ref ! x
+        followUp
+    }
 
   test("A SelectiveReceive Decorator must eventually execute the behavior") {
     val values = List("A", "B", "C")
@@ -53,6 +54,29 @@ trait SelectiveReceiveSpec extends FunSuite with PropertyChecks with MustMatcher
         }
         contained
       }
+    }
+  }
+
+  test("testing for C when list=List(A, C, B) and delivered=List(A, B): 0 was not equal to 1") {
+    val values = List("A", "B", "C")
+    val i = TestInbox[String]()
+    val b = behavior(i, 30, values)
+    val testkit = BehaviorTestKit(b, "eventually execute")
+    val list = List("A", "C", "B")
+    list.foreach(value => {
+      println(s"[SPEC] sending ${value}")
+      testkit.ref ! value
+      testkit.runOne()
+    })
+    val delivered = i.receiveAll()
+    println(s"[SPEC] delivered? ${delivered}")
+    delivered mustBe sorted
+    values.foldLeft(true) { (prev, v) =>
+      val contained = prev && list.contains(v)
+      withClue(s"testing for $v when list=$list and delivered=$delivered: ") {
+        delivered.count(_ == v) must be(if (contained) 1 else 0)
+      }
+      contained
     }
   }
 
