@@ -193,15 +193,19 @@ trait TransactorSpec extends FunSuite with MustMatchers with PropertyChecks {
     val testkit = BehaviorTestKit(Transactor(start, 3.seconds).asInstanceOf[Behavior[PrivateCommand[Int]]])
 
     val sessionInbox = TestInbox[ActorRef[Session[Int]]]()
+
+    println("[TEST} sending Begin")
     testkit.ref ! Begin(sessionInbox.ref)
     testkit.runOne()
     val ref :: Nil = sessionInbox.receiveAll()
     ref must be(testkit.childInbox(ref.path.name).ref)
 
+    println("[TEST} sending Begin")
     testkit.ref ! Begin(sessionInbox.ref)
     testkit.runOne()
     sessionInbox.receiveAll() mustBe empty
 
+    println("[TEST} sending RolledBack")
     testkit.ref ! RolledBack(ref)
     testkit.runOne()
 

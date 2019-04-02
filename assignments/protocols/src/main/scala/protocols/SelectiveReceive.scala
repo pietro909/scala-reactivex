@@ -22,17 +22,17 @@ object SelectiveReceive {
 
       import akka.actor.typed.Behavior.{validateAsInitial, interpretMessage, start, canonicalize}
 
-      println(s"Starting with ${bufferSize}")
+      // println(s"Starting with ${bufferSize}")
 
       val stashBuffer: StashBuffer[T] = StashBuffer(bufferSize)
 
       override def receive(ctx: ActorContext[T], msg: T): Behavior[T] = {
-        //println(msg)
+        println(s"[SelectiveReceive] ${msg}")
         //println(stashBuffer)
         val started: Behavior[T] = validateAsInitial(start(initialBehavior, ctx))
         val next: Behavior[T] = interpretMessage(started, ctx, msg)
         if (Behavior.isUnhandled(next)) {
-          //println(s"  ${msg} is unhandled")
+          println(s"  ${msg} is unhandled")
           stashBuffer.stash(msg)
           Behaviors.same
           //canonicalize(next, started, ctx)

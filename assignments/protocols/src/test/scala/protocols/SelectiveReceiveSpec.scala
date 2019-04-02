@@ -57,29 +57,6 @@ trait SelectiveReceiveSpec extends FunSuite with PropertyChecks with MustMatcher
     }
   }
 
-  test("testing for C when list=List(A, C, B) and delivered=List(A, B): 0 was not equal to 1") {
-    val values = List("A", "B", "C")
-    val i = TestInbox[String]()
-    val b = behavior(i, 30, values)
-    val testkit = BehaviorTestKit(b, "eventually execute")
-    val list = List("A", "C", "B")
-    list.foreach(value => {
-      println(s"[SPEC] sending ${value}")
-      testkit.ref ! value
-      testkit.runOne()
-    })
-    val delivered = i.receiveAll()
-    println(s"[SPEC] delivered? ${delivered}")
-    delivered mustBe sorted
-    values.foldLeft(true) { (prev, v) =>
-      val contained = prev && list.contains(v)
-      withClue(s"testing for $v when list=$list and delivered=$delivered: ") {
-        delivered.count(_ == v) must be(if (contained) 1 else 0)
-      }
-      contained
-    }
-  }
-
   test("A SelectiveReceive Decorator must tolerate worst-case sorting") {
     val values = (1 to 4).toList
     val i = TestInbox[Int]()

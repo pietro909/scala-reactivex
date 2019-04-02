@@ -60,10 +60,16 @@ object Transactor {
     Behaviors.receive[PrivateCommand[T]]({
       case (ctx, Begin(replyTo)) =>
         val sessionRef: ActorRef[Session[T]] = ctx.spawnAnonymous(sessionHandler(value, ctx.self, Set.empty[Long]))
-        ctx.schedule(sessionTimeout, sessionRef.narrow, Rollback[T]())
         ctx.watch(sessionRef)
+        ctx.schedule(sessionTimeout, sessionRef.narrow, Rollback[T]())
         replyTo ! sessionRef
-        inSession(value, sessionTimeout, sessionRef)
+        val inSessionRef = inSession(value, sessionTimeout, sessionRef)
+        println(s"\t[idle] Entering inSession @ ${inSessionRef}")
+        SelectiveReceive[PrivateCommand[T]](30, inSessionRef)
+
+      case (ctx, x) =>
+        println(s"\t[idle] Uknown ${x}")
+        Behaviors.same
     })
 
   /**
@@ -78,11 +84,31 @@ object Transactor {
   private def inSession[T](rollbackValue: T, sessionTimeout: FiniteDuration, sessionRef: ActorRef[Session[T]]): Behavior[PrivateCommand[T]] =
     Behaviors.receive[PrivateCommand[T]]({
       case (ctx, Committed(session, value)) =>
-        // TODO:
-        Behaviors.same
+        println(s"\t[inSession] Committed ${session} ${value}")
+        ctx.stop(session)
+        if (session == sessionRef) {
+          println(s"[inSession] entering idle with value ${value}")
+          idle(value, sessionTimeout)
+        } else {
+          Behaviors.same
+        }
 
       case (ctx, RolledBack(session)) =>
-        // TODO:
+        println(s"\t[inSession]RolledBack ${session}")
+        ctx.stop(session)
+        if (session == sessionRef) {
+          println(s"\t[inSession] entering idle")
+          idle(rollbackValue, sessionTimeout)
+        } else {
+          Behaviors.same
+        }
+
+      case (ctx, b: Begin[T]) =>
+        println(s"\t[inSession] unhandled Begin")
+        Behaviors.unhandled
+
+      case (ctx, x) =>
+        println(s"[inSession] Uknown ${x}")
         Behaviors.same
     })
 
@@ -100,9 +126,9 @@ object Transactor {
       return the result to the given ActorRef
        */
       case (ctx, Extract(f, replyTo)) =>
-        println(s"Extract")
+        println(s"\t[sessionHandler] Extract")
         val u = f(currentValue)
-        println(s"\t${currentValue} => ${u}")
+        println(s"\t[sessionHandler] ${currentValue} => ${u}")
         replyTo.narrow.tell(u)
         Behaviors.same
 
@@ -110,7 +136,7 @@ object Transactor {
       calculate a new value base on function 'f' and return the given reply value to the given replyTo ActorRef
        */
       case (ctx, Modify(f, id, reply, replyTo)) =>
-        println(s"Modify ${id}")
+        println(s"\t[sessionHandler] Modify ${id}")
         if (done.contains(id)) {
           replyTo.narrow.tell(reply)
           Behaviors.same
@@ -125,18 +151,26 @@ object Transactor {
        available to the next session; the given reply is sent to the given ActorRef as confirmation
        */
       case (ctx, Commit(reply, replyTo)) =>
-        commit ! Committed(ctx.self, currentValue)
+        println(s"\t[sessionHandler] Commit ${reply}")
+        commit.tell(Committed(ctx.self, currentValue))
+        println(s"\t[sessionHandler] Committed to ${commit}")
         replyTo.narrow.tell(reply)
-        ctx.stop(ctx.self)
-        Behaviors.stopped(Behaviors.unhandled)
+        //ctx.stop(ctx.self)
+        Behaviors.stopped //(Behaviors.unhandled)
+      //Behaviors.same
 
       /*
         terminate the current session rolling back all modifications,
         i.e. the next session will see the same value that this session saw when it started
        */
       case (ctx, Rollback()) =>
+        println(s"\t[sessionHandler] Rollback")
         // where do I send it?
-        ctx.stop(ctx.self)
-        Behaviors.stopped(Behaviors.unhandled)
+        //Behaviors.stopped(Behaviors.unhandled)
+        Behaviors.same
+
+      case x =>
+        println(s"\t[sessionHandler] Uknown ${x}")
+        Behaviors.unhandled
     })
 }
