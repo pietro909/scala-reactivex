@@ -49,6 +49,7 @@ trait TransactorSpec extends FunSuite with MustMatchers with PropertyChecks {
       val end = list.foldLeft(start) { (current, op) =>
         session.ref ! op
         session.runOne()
+        println(s"[Test] sending ${op}")
         op match {
           case Extract(_, _) =>
             i.receiveAll() must be(Seq(current))

@@ -27,29 +27,29 @@ object SelectiveReceive {
       val stashBuffer: StashBuffer[T] = StashBuffer(bufferSize)
 
       override def receive(ctx: ActorContext[T], msg: T): Behavior[T] = {
-        println(msg)
-        println(stashBuffer)
+        //println(msg)
+        //println(stashBuffer)
         val started: Behavior[T] = validateAsInitial(start(initialBehavior, ctx))
         val next: Behavior[T] = interpretMessage(started, ctx, msg)
         if (Behavior.isUnhandled(next)) {
-          println(s"  ${msg} is unhandled")
+          //println(s"  ${msg} is unhandled")
           stashBuffer.stash(msg)
           Behaviors.same
           //canonicalize(next, started, ctx)
         } else if (stashBuffer.nonEmpty) {
           // TODO: run the messages
-          println(s"  stashing everybody...")
+          //println(s"  stashing everybody...")
           //SelectiveReceive(bufferSize, stashBuffer.unstashAll(ctx.asScala, next))
           stashBuffer.unstashAll(ctx.asScala, SelectiveReceive(bufferSize, canonicalize(next, started, ctx)))
         } else {
-          println(s"  next! ${next}")
+          //println(s"  next! ${next}")
           //SelectiveReceive(bufferSize, next)
           next
         }
       }
 
       override def receiveSignal(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
-        println(s"receiveSignal! ${msg}")
+        //println(s"receiveSignal! ${msg}")
         initialBehavior
       }
     }
